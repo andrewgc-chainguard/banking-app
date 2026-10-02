@@ -21,9 +21,26 @@ on:
   workflow_dispatch:
     inputs:
       malware_package:
-        description: "npm package[@version] Chainguard currently flags as malware"
+        description: "Malware to attempt (all are confirmed MALWARE_DETECTED by Chainguard)"
         required: true
-        default: "agent-dag@1.35.12"
+        type: choice
+        default: "axios@1.14.1"
+        options:
+          # axios@1.14.1 -- a REAL dep of this app (package.json pins ^1.15.2).
+          # Mar 2026 maintainer-account hijack: injects a hidden RAT, exfiltrates data. MAL-2026-2307.
+          - "axios@1.14.1"
+          # axios@0.30.4 -- same hijack campaign, older line.
+          - "axios@0.30.4"
+          # agent-dag@1.35.12 -- generic flagged package; 113 versions withheld.
+          - "agent-dag@1.35.12"
+      custom_package:
+        description: "Optional: override with any package[@version] (leave blank to use the dropdown)"
+        required: false
+        default: ""
+
+# Free-form custom_package wins when provided; otherwise use the dropdown choice.
+env:
+  PKG: ${{ github.event.inputs.custom_package != '' && github.event.inputs.custom_package || github.event.inputs.malware_package }}
 
 jobs:
   unprotected-public-npm:
@@ -41,12 +58,12 @@ jobs:
       - name: A developer adds a dependency — from public npm, nothing stops it
         run: |
           # --ignore-scripts so real malware does NOT execute install hooks on the runner
-          npm install "${{ github.event.inputs.malware_package }}" \
+          npm install "${{ env.PKG }}" \
             --registry=https://registry.npmjs.org/ \
             --ignore-scripts
       - name: Result
         run: |
-          echo "::warning::'${{ github.event.inputs.malware_package }}' resolved from public npm — build is GREEN and the malicious dependency has shipped into the SDLC."
+          echo "::warning::'${{ env.PKG }}' resolved from public npm — build is GREEN and the malicious dependency has shipped into the SDLC."
 
   protected-chainguard:
     name: "B · Protected (JFrog virtual repo -> Chainguard)"
@@ -70,16 +87,16 @@ jobs:
       - name: Same developer adds the same dependency — Chainguard blocks it
         run: |
           set +e
-          out=$(npm install "${{ github.event.inputs.malware_package }}" --ignore-scripts 2>&1)
+          out=$(npm install "${{ env.PKG }}" --ignore-scripts 2>&1)
           code=$?
           set -e
           echo "$out"
           if [ "$code" -eq 0 ]; then
-            echo "::error::'${{ github.event.inputs.malware_package }}' was NOT blocked — it installed. Check that the virtual repo has NO public-npm remote ahead of the Chainguard remote; a stray fallback silently serves the malware."
+            echo "::error::'${{ env.PKG }}' was NOT blocked — it installed. Check that the virtual repo has NO public-npm remote ahead of the Chainguard remote; a stray fallback silently serves the malware."
             exit 1
           fi
           if echo "$out" | grep -qiE "MALWARE_DETECTED|blocked by Chainguard for malware"; then
-            echo "::notice::BLOCKED — Chainguard returned HTTP 403 MALWARE_DETECTED for '${{ github.event.inputs.malware_package }}'. The pipeline is stopped and the malicious package never entered the SDLC."
+            echo "::notice::BLOCKED — Chainguard returned HTTP 403 MALWARE_DETECTED for '${{ env.PKG }}'. The pipeline is stopped and the malicious package never entered the SDLC."
           else
             echo "::error::Install failed (exit $code) but WITHOUT a Chainguard malware verdict. Do not claim a malware block — investigate auth / network / cooldown / 404 first."
             exit 1
