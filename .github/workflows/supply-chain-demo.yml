@@ -70,14 +70,20 @@ jobs:
       - name: Same developer adds the same dependency — Chainguard blocks it
         run: |
           set +e
-          npm install "${{ github.event.inputs.malware_package }}" --ignore-scripts
+          out=$(npm install "${{ github.event.inputs.malware_package }}" --ignore-scripts 2>&1)
           code=$?
           set -e
+          echo "$out"
           if [ "$code" -eq 0 ]; then
-            echo "::error::'${{ github.event.inputs.malware_package }}' was NOT blocked. Check that the '${JFROG_REPO}' virtual repo has NO public-npm remote ahead of the Chainguard remote — a stray fallback silently serves the malware."
+            echo "::error::'${{ github.event.inputs.malware_package }}' was NOT blocked — it installed. Check that the virtual repo has NO public-npm remote ahead of the Chainguard remote; a stray fallback silently serves the malware."
             exit 1
           fi
-          echo "::notice::Install failed as expected (exit $code) — Chainguard withheld the malicious package. The pipeline is BLOCKED and malware never entered the SDLC. (Blocked packages currently surface as a 404 / fetch failure at the tarball.)"
+          if echo "$out" | grep -qiE "MALWARE_DETECTED|blocked by Chainguard for malware"; then
+            echo "::notice::BLOCKED — Chainguard returned HTTP 403 MALWARE_DETECTED for '${{ github.event.inputs.malware_package }}'. The pipeline is stopped and the malicious package never entered the SDLC."
+          else
+            echo "::error::Install failed (exit $code) but WITHOUT a Chainguard malware verdict. Do not claim a malware block — investigate auth / network / cooldown / 404 first."
+            exit 1
+          fi
       - name: Cleanup
         if: always()
         run: rm -f .npmrc
