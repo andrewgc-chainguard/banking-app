@@ -23,7 +23,7 @@ on:
       malware_package:
         description: "npm package[@version] Chainguard currently flags as malware"
         required: true
-        default: "REPLACE_ME@0.0.0"
+        default: "agent-dag@1.35.12"
 
 jobs:
   unprotected-public-npm:
