@@ -21,18 +21,18 @@ on:
   workflow_dispatch:
     inputs:
       malware_package:
-        description: "Malware to attempt (all are confirmed MALWARE_DETECTED by Chainguard)"
+        description: "Malware to attempt (MUST still be live on public npm AND flagged by Chainguard)"
         required: true
         type: choice
-        default: "axios@1.14.1"
+        default: "agent-dag@1.35.12"
         options:
-          # axios@1.14.1 -- a REAL dep of this app (package.json pins ^1.15.2).
-          # Mar 2026 maintainer-account hijack: injects a hidden RAT, exfiltrates data. MAL-2026-2307.
-          - "axios@1.14.1"
-          # axios@0.30.4 -- same hijack campaign, older line.
-          - "axios@0.30.4"
-          # agent-dag@1.35.12 -- generic flagged package; 113 versions withheld.
+          # agent-dag@1.35.12 -- STILL LIVE on npm + MALWARE_DETECTED by Chainguard (113 versions withheld).
+          # This is the reliable default: Job A installs it, Job B gets a clean 403 MALWARE_DETECTED.
           - "agent-dag@1.35.12"
+          # NOTE on axios: axios@1.14.1 / 0.30.4 (Mar 2026 maintainer-account hijack, injects a RAT,
+          # MAL-2026-2307) are a GREAT story but were YANKED from npm within hours. They now ETARGET
+          # ("version doesn't exist") in BOTH jobs -- npm never reaches the tarball, so no 403 fires.
+          # Keep axios as a talk-track example only; do NOT add it here as a runnable option.
       custom_package:
         description: "Optional: override with any package[@version] (leave blank to use the dropdown)"
         required: false
