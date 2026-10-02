@@ -1,0 +1,20 @@
+FROM cgr.dev/chainguard-private/node:latest-dev
+
+USER root
+
+WORKDIR /app
+
+COPY package*.json ./
+ 
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
+    npm install
+
+COPY . .
+
+RUN chown -R node:node /app
+
+USER node
+ 
+EXPOSE 3000
+ 
+CMD ["/usr/bin/npm", "run", "dev"]

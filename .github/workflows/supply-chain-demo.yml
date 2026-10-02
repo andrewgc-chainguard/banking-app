@@ -1,0 +1,83 @@
+name: supply-chain-demo
+
+# Mirrors the SDLC build step twice, IDENTICALLY, changing ONLY the registry the
+# pipeline resolves dependencies from:
+#
+#   Job A (unprotected) -> public npm registry        -> real deps build AND the
+#                                                         malicious package installs;
+#                                                         build goes GREEN -> malware ships.
+#   Job B (protected)   -> JFrog virtual repo -> CGR  -> real deps still build fine,
+#                                                         but the malicious package is
+#                                                         WITHHELD -> build FAILS (the gate).
+#
+# Same code, same steps, same developer action. Only .npmrc differs.
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   JFROG_NPM_REGISTRY   https://chainguardlibraries.jfrog.io/artifactory/api/npm/andrewgc-jscript/
+#   JFROG_NPM_AUTH_HOST  chainguardlibraries.jfrog.io/artifactory/api/npm/andrewgc-jscript   (no scheme, no trailing slash)
+#   JFROG_TOKEN          Artifactory identity token (the npm _authToken value)
+
+on:
+  workflow_dispatch:
+    inputs:
+      malware_package:
+        description: "npm package[@version] Chainguard currently flags as malware"
+        required: true
+        default: "REPLACE_ME@0.0.0"
+
+jobs:
+  unprotected-public-npm:
+    name: "A · Unprotected (public npm)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build the app from PUBLIC npm
+        run: |
+          rm -f package-lock.json
+          npm install --registry=https://registry.npmjs.org/
+      - name: A developer adds a dependency — from public npm, nothing stops it
+        run: |
+          # --ignore-scripts so real malware does NOT execute install hooks on the runner
+          npm install "${{ github.event.inputs.malware_package }}" \
+            --registry=https://registry.npmjs.org/ \
+            --ignore-scripts
+      - name: Result
+        run: |
+          echo "::warning::'${{ github.event.inputs.malware_package }}' resolved from public npm — build is GREEN and the malicious dependency has shipped into the SDLC."
+
+  protected-chainguard:
+    name: "B · Protected (JFrog virtual repo -> Chainguard)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Point the build at the Chainguard-backed registry
+        run: |
+          cat > .npmrc <<EOF
+          registry=${{ secrets.JFROG_NPM_REGISTRY }}
+          //${{ secrets.JFROG_NPM_AUTH_HOST }}/:_authToken=${{ secrets.JFROG_TOKEN }}
+          always-auth=true
+          EOF
+      - name: Build the app through Chainguard — real deps resolve normally
+        run: |
+          rm -f package-lock.json
+          npm install
+      - name: Same developer adds the same dependency — Chainguard blocks it
+        run: |
+          set +e
+          npm install "${{ github.event.inputs.malware_package }}" --ignore-scripts
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "::error::'${{ github.event.inputs.malware_package }}' was NOT blocked. Check that the '${JFROG_REPO}' virtual repo has NO public-npm remote ahead of the Chainguard remote — a stray fallback silently serves the malware."
+            exit 1
+          fi
+          echo "::notice::Install failed as expected (exit $code) — Chainguard withheld the malicious package. The pipeline is BLOCKED and malware never entered the SDLC. (Blocked packages currently surface as a 404 / fetch failure at the tarball.)"
+      - name: Cleanup
+        if: always()
+        run: rm -f .npmrc
