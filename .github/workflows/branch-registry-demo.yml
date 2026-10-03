@@ -1,0 +1,69 @@
+name: branch-registry-demo
+
+# Branch-driven demo: this workflow resolves dependencies using THIS BRANCH'S
+# committed .npmrc, so the outcome flips with the branch:
+#
+#   main       -> .npmrc = public npm      -> malware INSTALLS -> GREEN (shipped, silent)
+#   chainguard -> .npmrc = JFrog -> CGR    -> malware BLOCKED (403) -> RED (stopped, loud)
+#
+# The point: "merge the PR, and your pipeline starts failing loudly on malware
+# instead of shipping it silently."
+#
+# Requires secret JFROG_TOKEN (for ${JFROG_TOKEN} expansion in the chainguard .npmrc).
+
+on:
+  workflow_dispatch:
+    inputs:
+      malware_package:
+        description: "Malware to attempt (must be live on npm AND flagged by Chainguard)"
+        required: true
+        type: choice
+        default: "agent-dag@1.35.12"
+        options:
+          - "agent-dag@1.35.12"
+      custom_package:
+        description: "Optional: override with any package[@version]"
+        required: false
+        default: ""
+
+env:
+  PKG: ${{ github.event.inputs.custom_package != '' && github.event.inputs.custom_package || github.event.inputs.malware_package }}
+  JFROG_TOKEN: ${{ secrets.JFROG_TOKEN }}
+
+jobs:
+  install-via-branch-registry:
+    name: "Install via this branch's .npmrc"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Which registry does this branch resolve from?
+        run: |
+          echo "Branch: ${{ github.ref_name }}"
+          echo "----- .npmrc -----"
+          cat .npmrc 2>/dev/null || echo "(no .npmrc; npm default)"
+          echo "----- effective registry -----"
+          npm config get registry
+      - name: Build the app using this branch's registry
+        run: |
+          rm -f package-lock.json
+          npm install
+      - name: Developer adds a dependency — outcome depends on the registry
+        run: |
+          set +e
+          out=$(npm install "${{ env.PKG }}" --ignore-scripts 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then
+            echo "::warning::GREEN but COMPROMISED — '${{ env.PKG }}' installed from this branch's registry. In a real pipeline it ships silently."
+            exit 0
+          fi
+          if echo "$out" | grep -qiE "MALWARE_DETECTED|blocked by Chainguard for malware"; then
+            echo "::error::BLOCKED — and this RED is the win. Chainguard returned 403 MALWARE_DETECTED for '${{ env.PKG }}'. The build fails loudly instead of shipping malware."
+            exit 1
+          fi
+          echo "::error::Install failed WITHOUT a Chainguard malware verdict (ETARGET / 404 / auth). Investigate; do not claim a malware block."
+          exit 1
