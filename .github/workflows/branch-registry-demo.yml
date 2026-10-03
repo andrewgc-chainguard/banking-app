@@ -6,8 +6,8 @@ name: branch-registry-demo
 #   main       -> .npmrc = public npm      -> malware INSTALLS -> GREEN (shipped, silent)
 #   chainguard -> .npmrc = JFrog -> CGR    -> malware BLOCKED (403) -> RED (stopped, loud)
 #
-# The point: "merge the PR, and your pipeline starts failing loudly on malware
-# instead of shipping it silently."
+# Each run writes a report to the job summary (top of the run page), not just
+# annotations, so the outcome is obvious on screen.
 #
 # Requires secret JFROG_TOKEN (for ${JFROG_TOKEN} expansion in the chainguard .npmrc).
 
@@ -52,18 +52,52 @@ jobs:
           npm install
       - name: Developer adds a dependency — outcome depends on the registry
         run: |
+          REG=$(npm config get registry)
           set +e
           out=$(npm install "${{ env.PKG }}" --ignore-scripts 2>&1)
           code=$?
           set -e
           echo "$out"
+
+          {
+            echo "## Supply-chain demo — branch \`${{ github.ref_name }}\`"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Registry | \`$REG\` |"
+            echo "| Package | \`${{ env.PKG }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
           if [ "$code" -eq 0 ]; then
-            echo "::warning::GREEN but COMPROMISED — '${{ env.PKG }}' installed from this branch's registry. In a real pipeline it ships silently."
+            {
+              echo "| Result | ⚠️ **INSTALLED** — malware shipped (build is green) |"
+              echo ""
+              echo "> This branch resolves from public npm, so \`${{ env.PKG }}\` installed and the build passed."
+              echo "> In a real pipeline the malicious dependency ships **silently**."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::GREEN but COMPROMISED — '${{ env.PKG }}' installed from this branch's registry."
             exit 0
           fi
+
           if echo "$out" | grep -qiE "MALWARE_DETECTED|blocked by Chainguard for malware"; then
-            echo "::error::BLOCKED — and this RED is the win. Chainguard returned 403 MALWARE_DETECTED for '${{ env.PKG }}'. The build fails loudly instead of shipping malware."
+            {
+              echo "| Result | ⛔ **BLOCKED** — HTTP 403 MALWARE_DETECTED (red = the win) |"
+              echo ""
+              echo "Chainguard withheld the package; the build fails loudly instead of shipping malware:"
+              echo ""
+              echo '```'
+              echo "$out" | grep -iE "E403|403 |MALWARE_DETECTED|blocked by Chainguard" | head -4
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::BLOCKED — Chainguard returned 403 MALWARE_DETECTED for '${{ env.PKG }}'."
             exit 1
           fi
-          echo "::error::Install failed WITHOUT a Chainguard malware verdict (ETARGET / 404 / auth). Investigate; do not claim a malware block."
+
+          {
+            echo "| Result | ❌ Failed WITHOUT a malware verdict (investigate) |"
+            echo ""
+            echo "> Not a provable malware block (ETARGET / 404 / auth). Use a package that is live on npm AND flagged."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Install failed without a Chainguard malware verdict."
           exit 1
