@@ -8,10 +8,8 @@ Messaging lives in `TALKTRACK.md`. This is the step order.
 
 ## Can I run these in any order?
 - **Part A (GitHub) and Part B (Local) are independent** — run either first.
-- **`demo.sh` is standalone** — run it anytime; it uses throwaway temp dirs and touches nothing.
-- **Rules that DO matter locally:**
-  1. `export JFROG_TOKEN=...` **before** any Chainguard step.
-  2. `rm -rf node_modules package-lock.json` **when switching registries/branches** (public-npm and Chainguard tarballs have different integrity hashes; a stale lockfile errors).
+- **`demo.sh` and `run-cg.sh` are standalone** — run anytime. They handle the token themselves and don't require switching branches. (`demo.sh` uses throwaway temp dirs; `run-cg.sh` does a clean install for you.)
+- The only thing to remember: after `run-cg.sh`, run the **Reset** (step 12) before going back to a public-npm `npm install`, so the Chainguard lockfile doesn't linger.
 
 ---
 
@@ -50,18 +48,15 @@ Messaging lives in `TALKTRACK.md`. This is the step order.
     ./demo.sh
     ```
     → **PUBLIC npm → INSTALLED** vs **Chainguard → BLOCKED 403 MALWARE_DETECTED**, side by side.
-11. **(Optional) prove the real app still builds through Chainguard:**
+11. **Prove the real app still builds + runs through Chainguard** (the "nothing breaks" beat):
     ```bash
-    git checkout chainguard
-    export JFROG_TOKEN=$(grep _authToken ~/mydata/cg-repo/libdemo/.npmrc | sed 's/.*_authToken=//')
-    rm -rf node_modules package-lock.json
-    npm install
-    npm run dev          # → localhost:3000, same app, deps via Chainguard
+    ./run-cg.sh          # clean install via Chainguard, then starts the app
     ```
+    → open **localhost:3000** again. Same app, all deps resolved through Chainguard (npm even reports **0 vulnerabilities**). `Ctrl+C` to stop. No token/branch steps — the script handles it.
 12. **Reset:**
     ```bash
-    git checkout main
     rm -rf node_modules package-lock.json
+    git checkout -- package-lock.json
     ```
 
 ---
